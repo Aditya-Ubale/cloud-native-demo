@@ -1,0 +1,67 @@
+name: Docker and Kubernetes Demo
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Identity
+        run: |
+          echo "Name: Aditya Ubale | PRN: 202301040111"
+          date
+
+      - name: Build Docker image
+        run: |
+          cd app
+          docker build -t adityaubale/cloud-demo:1.0 .
+
+      - name: List images
+        run: docker images adityaubale/cloud-demo
+
+      - name: Run container and test
+        run: |
+          docker run -d --name cloud-demo -p 5000:5000 adityaubale/cloud-demo:1.0
+          sleep 4
+          docker ps
+          docker logs cloud-demo
+          curl -s localhost:5000/health; echo
+          curl -s localhost:5000/api/info; echo
+          docker rm -f cloud-demo
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: demo
+
+      - name: Cluster nodes
+        run: kubectl get nodes
+
+      - name: Load image and deploy
+        run: |
+          kind load docker-image adityaubale/cloud-demo:1.0 --name demo
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl rollout status deployment/cloud-demo-deployment --timeout=120s
+
+      - name: Show deployment, pods and service
+        run: |
+          kubectl get deployments
+          kubectl get pods -o wide
+          kubectl get svc
+
+      - name: Access through Service and load-balance
+        run: |
+          kubectl port-forward svc/cloud-demo-service 8080:80 &
+          sleep 4
+          for i in 1 2 3 4 5 6; do curl -s localhost:8080/api/info | grep -o '"hostname":"[^"]*"'; done
+
+      - name: Self-healing
+        run: |
+          POD=$(kubectl get pods -l app=cloud-demo -o jsonpath='{.items[0].metadata.name}')
+          kubectl delete pod $POD
+          sleep 5
+          kubectl get pods
